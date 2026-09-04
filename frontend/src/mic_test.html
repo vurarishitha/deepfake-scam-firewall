@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Mic Recorder Test</title>
+  <style>
+    body { font-family: sans-serif; padding: 40px; background: #12141a; color: #ecedf0; }
+    button { padding: 12px 20px; font-size: 16px; cursor: pointer; margin-right: 12px; }
+    #log { margin-top: 20px; font-family: monospace; font-size: 13px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>mic.js standalone test</h1>
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+  <div id="log"></div>
+
+  <script type="module">
+    import { startMicRecording } from './mic.js';
+
+    const log = document.getElementById('log');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    let controls = null;
+    let chunkCount = 0;
+
+    function addLog(msg) {
+      log.textContent += msg + '\n';
+    }
+
+    startBtn.onclick = async () => {
+      chunkCount = 0;
+      addLog('Requesting mic access...');
+      controls = await startMicRecording(
+        (audioBlob) => {
+          chunkCount++;
+          addLog(`Chunk #${chunkCount} received: ${audioBlob.size} bytes, type=${audioBlob.type}`);
+        },
+        (err) => {
+          addLog('ERROR: ' + err.message);
+        }
+      );
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      addLog('Recording started. Speak into your mic.');
+    };
+
+    stopBtn.onclick = () => {
+      if (controls) controls.stop();
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      addLog('Recording stopped.');
+    };
+  </script>
+</body>
+</html>
