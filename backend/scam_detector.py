@@ -9,14 +9,14 @@ FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY")
 
 def analyze_scam_intent(transcript_text: str) -> float:
     """
-    Sends transcript text to Featherless LLM and returns 
-    a scam intent probability score between 0.0 and 1.0.
+    Uses Featherless AI open-weights infrastructure to calculate 
+    a scam intent score (0.0 - 1.0) on streaming transcripts.
     """
-    if not transcript_text or len(transcript_text.strip()) == 0:
+    if not transcript_text or not transcript_text.strip():
         return 0.0
 
-    # Basic fallback heuristic if API key is missing
     if not FEATHERLESS_API_KEY:
+        # Fallback heuristic if API key is not present
         keywords = ["bank", "otp", "wire", "urgent", "transfer", "police", "arrest", "account"]
         matches = sum(1 for word in keywords if word in transcript_text.lower())
         return min(1.0, matches * 0.25)
@@ -31,11 +31,15 @@ def analyze_scam_intent(transcript_text: str) -> float:
         "messages": [
             {
                 "role": "system",
-                "content": "You are a fraud detection agent. Analyze the text for scam patterns (e.g., sense of urgency, requesting OTPs, gift cards, bank transfers, impersonating officials). Output ONLY a valid JSON object with key 'scam_score' between 0.0 and 1.0."
+                "content": (
+                    "You are a real-time scam detection firewall. Analyze the speech transcript "
+                    "for malicious intent (e.g., impersonation, social engineering, demanding money/OTPs). "
+                    "Respond ONLY with a JSON object: {\"scam_score\": float} where float is between 0.0 and 1.0."
+                )
             },
             {
                 "role": "user",
-                "content": f"Analyze this transcript: '{transcript_text}'"
+                "content": f"Transcript: \"{transcript_text}\""
             }
         ],
         "temperature": 0.1
@@ -43,20 +47,15 @@ def analyze_scam_intent(transcript_text: str) -> float:
 
     try:
         response = requests.post(
-            "https://api.featherless.ai/v1/chat/completions", 
-            headers=headers, 
-            json=payload, 
-            timeout=5
+            "https://api.featherless.ai/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=3
         )
         if response.status_code == 200:
-            res_json = response.json()
-            content = res_json['choices'][0]['message']['content']
+            content = response.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
             return float(parsed.get("scam_score", 0.5))
         return 0.5
     except Exception:
         return 0.5
-
-if __name__ == "__main__":
-    score = analyze_scam_intent("Please send me your bank OTP immediately or your account will be blocked.")
-    print("Test Intent Score:", score)
