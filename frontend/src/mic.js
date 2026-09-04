@@ -8,45 +8,51 @@
  */
 
 export function startMicRecording(onAudioChunk, onError) {
-  navigator.mediaDevices
-    .getUserMedia({ audio: true })
-    .then((stream) => {
-      const mediaRecorder = new MediaRecorder(stream);
-      const CHUNK_INTERVAL_MS = 2000; // ~2 seconds per chunk, per guide
+  return new Promise((resolve, reject) => {
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        const mediaRecorder = new MediaRecorder(stream);
+        const CHUNK_INTERVAL_MS = 2000; // ~2 seconds per chunk, per guide
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          // Hand the raw audio blob off to whatever callback
-          // the frontend/backend integration wires in here.
-          onAudioChunk(event.data);
-        }
-      };
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            // Hand the raw audio blob off to whatever callback
+            // the frontend/backend integration wires in here.
+            onAudioChunk(event.data);
+          }
+        };
 
-      mediaRecorder.onerror = (event) => {
-        console.error("MediaRecorder error:", event.error);
-        if (onError) onError(event.error);
-      };
+        mediaRecorder.onerror = (event) => {
+          console.error("MediaRecorder error:", event.error);
+          if (onError) onError(event.error);
+        };
 
-      // start(timeslice) automatically fires ondataavailable every
-      // CHUNK_INTERVAL_MS instead of only at the end of recording.
-      mediaRecorder.start(CHUNK_INTERVAL_MS);
+        // start(timeslice) automatically fires ondataavailable every
+        // CHUNK_INTERVAL_MS instead of only at the end of recording.
+        mediaRecorder.start(CHUNK_INTERVAL_MS);
 
-      console.log("Mic recording started, chunking every 2s.");
+        console.log("Mic recording started, chunking every 2s.");
 
-      // Return controls so the caller (App.tsx / M3's UI) can stop it later.
-      return {
-        stop: () => {
-          mediaRecorder.stop();
-          stream.getTracks().forEach((track) => track.stop());
-          console.log("Mic recording stopped.");
-        },
-        mediaRecorder,
-      };
-    })
-    .catch((err) => {
-      console.error("Could not access microphone:", err);
-      if (onError) onError(err);
-    });
+        // Return controls so the caller (App.tsx / M3's UI) can stop it later,
+        // and expose the raw stream so other components (e.g. Waveform.tsx)
+        // can read live audio levels from it.
+        resolve({
+          stop: () => {
+            mediaRecorder.stop();
+            stream.getTracks().forEach((track) => track.stop());
+            console.log("Mic recording stopped.");
+          },
+          mediaRecorder,
+          stream,
+        });
+      })
+      .catch((err) => {
+        console.error("Could not access microphone:", err);
+        if (onError) onError(err);
+        reject(err);
+      });
+  });
 }
 
 /**
@@ -54,7 +60,7 @@ export function startMicRecording(onAudioChunk, onError) {
  *
  * import { startMicRecording } from './mic';
  *
- * const recorderControls = startMicRecording(
+ * startMicRecording(
  *   (audioBlob) => {
  *     // send audioBlob over the WebSocket to M1's backend here
  *     websocket.send(audioBlob);
@@ -62,8 +68,5 @@ export function startMicRecording(onAudioChunk, onError) {
  *   (error) => {
  *     // show an error state in the UI, e.g. "mic access denied"
  *   }
- * );
- *
- * // later, to stop:
- * recorderControls.stop();
- */
+ * ).then((recorderControls) => {
+ *   // recorderControls.stream is available here

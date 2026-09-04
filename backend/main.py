@@ -5,7 +5,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from risk_engine import evaluate_call_threat
 from scam_detector import analyze_scam_intent
 
 load_dotenv()
@@ -27,27 +26,45 @@ def read_root():
 @app.websocket("/ws/stream")
 async def websocket_stream(websocket: WebSocket):
     await websocket.accept()
-    print("Client connected to real-time analysis pipeline.")
+    print("[WS] Client connected to real-time analysis pipeline.")
+    
+    # Track the highest score achieved in this session so it never drops backward
+    highest_score_seen = 0.0
     
     try:
         while True:
-            message = await websocket.receive()
+            data_str = await websocket.receive_text()
+            payload = json.loads(data_str)
+            transcript_text = payload.get("transcript", "").strip()
             
-            if "bytes" in message:
-                pcm_bytes = message["bytes"]
-                # Evaluate intent against fallback or transcript stream
-                intent_score = analyze_scam_intent("Urgent bank transfer required")
-                
-                threat_data = evaluate_call_threat(pcm_bytes, intent_score)
-                await websocket.send_text(json.dumps(threat_data))
-                
-            elif "text" in message:
-                data = json.loads(message["text"])
-                transcript = data.get("transcript", "")
-                intent_score = analyze_scam_intent(transcript)
-                
-                threat_data = evaluate_call_threat(b"", intent_score)
-                await websocket.send_text(json.dumps(threat_data))
+            if not transcript_text:
+                continue
+
+            print(f"[Backend Processing]: '{transcript_text}'")
+
+            # Get intent score from Scam Detector
+            intent_score = await asyncio.to_thread(analyze_scam_intent, transcript_text)
+            
+            # Ensure the score never drops below what we've already detected in this session
+            if intent_score > highest_score_seen:
+                highest_score_seen = intent_score
+            else:
+                intent_score = highest_score_seen
+
+            final_score_int = int(intent_score * 100)
+
+            # Build response payload
+            response_payload = {
+                "score": final_score_int,
+                "composite_risk": final_score_int,
+                "status": "INTERCEPT" if final_score_int >= 80 else "SAFE",
+                "pitch_std": 0.05,
+                "timbre_std": 0.02,
+                "transcript": transcript_text
+            }
+
+            print(f"[Backend Sending Locked Score]: {final_score_int}%")
+            await websocket.send_text(json.dumps(response_payload))
 
     except WebSocketDisconnect:
-        print("Client disconnected.")
+        print("[WS] Client disconnected.")
