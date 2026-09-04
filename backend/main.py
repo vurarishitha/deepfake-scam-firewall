@@ -50,11 +50,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await manager.send_json(websocket, {
                 "transcript": transcript_so_far.strip(),
-                "llm_score": llm_result["scam_risk"],
-                "reason": llm_result["reason"],
-                "acoustic_score": acoustic_score,
-                "fused_risk": fused,
-                "intercept": fused >= 0.80,
+                "llm_score": float(llm_result["scam_risk"]),
+                "reason": str(llm_result["reason"]),
+                "acoustic_score": float(acoustic_score),
+                "fused_risk": float(fused),
+                "intercept": bool(fused >= 0.80),
             })
 
     except WebSocketDisconnect:

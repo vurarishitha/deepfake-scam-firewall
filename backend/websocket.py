@@ -14,7 +14,20 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def send_json(self, websocket: WebSocket, data: dict):
-        await websocket.send_json(data)
+        import json
+        import numpy as np
+
+        def serializer(obj):
+            if isinstance(obj, (np.bool_, bool)):
+                return bool(obj)
+            if isinstance(obj, (np.floating, float)):
+                return float(obj)
+            if isinstance(obj, (np.integer, int)):
+                return int(obj)
+            return str(obj)
+
+        clean_json = json.dumps(data, default=serializer)
+        await websocket.send_text(clean_json)
 
 manager = ConnectionManager()
 
