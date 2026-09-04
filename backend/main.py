@@ -1,14 +1,16 @@
 import os
+import json
+import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
-from websocket import manager, save_chunk_to_tempfile
-from scam_detector import score
-from stt import transcribe
-from risk_engine import fuse_risk
-from audio_features import analyze_voice_authenticity
+from risk_engine import evaluate_call_threat
+from scam_detector import analyze_scam_intent
 
-app = FastAPI()
+load_dotenv()
+
+app = FastAPI(title="Deepfake Scam Firewall API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,49 +21,33 @@ app.add_middleware(
 )
 
 @app.get("/")
-def health_check():
-    return {"status": "ok"}
+def read_root():
+    return {"status": "online", "system": "Deepfake Scam Firewall"}
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    transcript_so_far = ""
+@app.websocket("/ws/stream")
+async def websocket_stream(websocket: WebSocket):
+    await websocket.accept()
+    print("Client connected to real-time analysis pipeline.")
+    
     try:
         while True:
-            audio_bytes = await websocket.receive_bytes()
-
-            tmp_path = save_chunk_to_tempfile(audio_bytes)
-            try:
-                chunk_text = transcribe(tmp_path)
-
-                try:
-                    acoustic_score = analyze_voice_authenticity(tmp_path)
-                except Exception as e:
-                    print(f"Acoustic scoring error: {e}")
-                    acoustic_score = 0.0
-            finally:
-                os.remove(tmp_path)
-
-            if chunk_text:
-                transcript_so_far += " " + chunk_text
-
-            llm_result = score(transcript_so_far)
-            fused = fuse_risk(acoustic_score, llm_result["scam_risk"])
-
-            await manager.send_json(websocket, {
-                "transcript": transcript_so_far.strip(),
-                "llm_score": float(llm_result["scam_risk"]),
-                "reason": str(llm_result["reason"]),
-                "acoustic_score": float(acoustic_score),
-                "fused_risk": float(fused),
-                "intercept": bool(fused >= 0.80),
-            })
+            message = await websocket.receive()
+            
+            if "bytes" in message:
+                pcm_bytes = message["bytes"]
+                # Evaluate intent against fallback or transcript stream
+                intent_score = analyze_scam_intent("Urgent bank transfer required")
+                
+                threat_data = evaluate_call_threat(pcm_bytes, intent_score)
+                await websocket.send_text(json.dumps(threat_data))
+                
+            elif "text" in message:
+                data = json.loads(message["text"])
+                transcript = data.get("transcript", "")
+                intent_score = analyze_scam_intent(transcript)
+                
+                threat_data = evaluate_call_threat(b"", intent_score)
+                await websocket.send_text(json.dumps(threat_data))
 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+        print("Client disconnected.")

@@ -1,48 +1,62 @@
 import os
 import json
-from openai import OpenAI
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(
-    api_key=os.getenv("FEATHERLESS_API_KEY"),
-    base_url="https://api.featherless.ai/v1"
-)
+FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY")
 
-SYSTEM_PROMPT = """You are a real-time scam-call detection assistant.
-Analyze the transcript of an ongoing phone call and assess scam risk.
+def analyze_scam_intent(transcript_text: str) -> float:
+    """
+    Sends transcript text to Featherless LLM and returns 
+    a scam intent probability score between 0.0 and 1.0.
+    """
+    if not transcript_text or len(transcript_text.strip()) == 0:
+        return 0.0
 
-Look for: urgency or pressure to act immediately, requests for OTP/PIN/card
-numbers/passwords, impersonation of a bank/government agency/tech support/
-employer, requests to transfer money via wire transfer, gift cards, prepaid
-cards, or cryptocurrency (these are common because they are difficult to
-trace or reverse), requests to install remote-access software, and threats
-of account suspension, legal action, or harm to a family member.
+    # Basic fallback heuristic if API key is missing
+    if not FEATHERLESS_API_KEY:
+        keywords = ["bank", "otp", "wire", "urgent", "transfer", "police", "arrest", "account"]
+        matches = sum(1 for word in keywords if word in transcript_text.lower())
+        return min(1.0, matches * 0.25)
 
-Gift card and prepaid card payment requests should be treated as HIGH RISK,
-similar to wire transfer requests, since they are a hallmark of scam tactics.
+    headers = {
+        "Authorization": f"Bearer {FEATHERLESS_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-Return ONLY valid JSON in this exact shape, with no extra text, no markdown:
-{"scam_risk": <float between 0.0 and 1.0>, "reason": "<short explanation>"}
-"""
+    payload = {
+        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a fraud detection agent. Analyze the text for scam patterns (e.g., sense of urgency, requesting OTPs, gift cards, bank transfers, impersonating officials). Output ONLY a valid JSON object with key 'scam_score' between 0.0 and 1.0."
+            },
+            {
+                "role": "user",
+                "content": f"Analyze this transcript: '{transcript_text}'"
+            }
+        ],
+        "temperature": 0.1
+    }
 
-def score(transcript: str) -> dict:
-    if not transcript or not transcript.strip():
-        return {"scam_risk": 0.0, "reason": "No transcript yet"}
     try:
-        response = client.chat.completions.create(
-            model="Qwen/Qwen2.5-7B-Instruct",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": transcript},
-            ],
-            temperature=0.2,
+        response = requests.post(
+            "https://api.featherless.ai/v1/chat/completions", 
+            headers=headers, 
+            json=payload, 
+            timeout=5
         )
-        raw = response.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"scam_risk": 0.0, "reason": "Failed to parse LLM output"}
-    except Exception as e:
-        return {"scam_risk": 0.0, "reason": f"LLM error: {str(e)}"}
+        if response.status_code == 200:
+            res_json = response.json()
+            content = res_json['choices'][0]['message']['content']
+            parsed = json.loads(content)
+            return float(parsed.get("scam_score", 0.5))
+        return 0.5
+    except Exception:
+        return 0.5
+
+if __name__ == "__main__":
+    score = analyze_scam_intent("Please send me your bank OTP immediately or your account will be blocked.")
+    print("Test Intent Score:", score)
