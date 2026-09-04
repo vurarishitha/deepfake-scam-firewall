@@ -6,12 +6,13 @@ from websocket import manager, save_chunk_to_tempfile
 from scam_detector import score
 from stt import transcribe
 from risk_engine import fuse_risk
+from audio_features import analyze_voice_authenticity
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten before final submission
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,6 +33,12 @@ async def websocket_endpoint(websocket: WebSocket):
             tmp_path = save_chunk_to_tempfile(audio_bytes)
             try:
                 chunk_text = transcribe(tmp_path)
+
+                try:
+                    acoustic_score = analyze_voice_authenticity(tmp_path)
+                except Exception as e:
+                    print(f"Acoustic scoring error: {e}")
+                    acoustic_score = 0.0
             finally:
                 os.remove(tmp_path)
 
@@ -39,8 +46,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 transcript_so_far += " " + chunk_text
 
             llm_result = score(transcript_so_far)
-
-            acoustic_score = 0.0  # TODO: replace with M2's real score once merged
             fused = fuse_risk(acoustic_score, llm_result["scam_risk"])
 
             await manager.send_json(websocket, {
