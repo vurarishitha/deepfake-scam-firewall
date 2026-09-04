@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "@types/node": "^26.4.1"
+  },
+  "dependencies": {
+    "lucide-react": "^1.41.0",
+    "recharts": "^3.10.1"
+  }
+}

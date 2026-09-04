@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import requests
 from dotenv import load_dotenv
 
@@ -8,55 +9,46 @@ load_dotenv()
 FEATHERLESS_API_KEY = os.getenv("FEATHERLESS_API_KEY")
 
 def analyze_scam_intent(transcript_text: str) -> float:
-    """
-    Sends transcript text to Featherless LLM and returns 
-    a scam intent probability score between 0.0 and 1.0.
-    """
-    if not transcript_text or len(transcript_text.strip()) == 0:
+    if not transcript_text:
         return 0.0
 
-    # Basic fallback heuristic if API key is missing
-    if not FEATHERLESS_API_KEY:
-        keywords = ["bank", "otp", "wire", "urgent", "transfer", "police", "arrest", "account"]
-        matches = sum(1 for word in keywords if word in transcript_text.lower())
-        return min(1.0, matches * 0.25)
+    text = transcript_text.lower()
+    print(f"[ScamDetector Analyzing]: '{text}'")
 
-    headers = {
-        "Authorization": f"Bearer {FEATHERLESS_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    words = text.split()
+    word_count = len(words)
+    
+    if word_count == 0:
+        return 0.0
 
-    payload = {
-        "model": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a fraud detection agent. Analyze the text for scam patterns (e.g., sense of urgency, requesting OTPs, gift cards, bank transfers, impersonating officials). Output ONLY a valid JSON object with key 'scam_score' between 0.0 and 1.0."
-            },
-            {
-                "role": "user",
-                "content": f"Analyze this transcript: '{transcript_text}'"
-            }
-        ],
-        "temperature": 0.1
-    }
+    # Weighted keywords
+    low_risk = ["bank", "account", "department", "customer", "service"]
+    med_risk = ["urgent", "verify", "update", "suspended", "security"]
+    high_risk = ["otp", "odp", "fraud", "blocked", "pin", "wire", "password"]
 
-    try:
-        response = requests.post(
-            "https://api.featherless.ai/v1/chat/completions", 
-            headers=headers, 
-            json=payload, 
-            timeout=5
-        )
-        if response.status_code == 200:
-            res_json = response.json()
-            content = res_json['choices'][0]['message']['content']
-            parsed = json.loads(content)
-            return float(parsed.get("scam_score", 0.5))
-        return 0.5
-    except Exception:
-        return 0.5
+    # Calculate base threat weight
+    threat_weight = 0.0
+    for w in words:
+        if w in low_risk:
+            threat_weight += 0.10
+        elif w in med_risk:
+            threat_weight += 0.25
+        elif w in high_risk:
+            threat_weight += 0.45
 
-if __name__ == "__main__":
-    score = analyze_scam_intent("Please send me your bank OTP immediately or your account will be blocked.")
-    print("Test Intent Score:", score)
+    if threat_weight == 0.0:
+        return 0.05  # Minimal baseline for active speech
+
+    # Blend threat weight with word progression (smooth curve scaling)
+    # This prevents short phrases from blowing past limits too fast
+    progression_factor = min(word_count / 12.0, 1.0)
+    score = (threat_weight * 0.7) + (progression_factor * 0.3)
+
+    # Hard cap early sentences to guarantee smooth ramp-up
+    if word_count < 6 and score > 0.6:
+        score = 0.55
+
+    score = min(max(score, 0.05), 1.0)
+    
+    print(f"[ScamDetector Smooth Score]: {int(score * 100)}%")
+    return float(score)
